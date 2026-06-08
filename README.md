@@ -146,16 +146,41 @@ cron-job.org should call the private deployment repo's `repository_dispatch`
 trigger. We avoid a GitHub Actions `schedule` trigger because scheduled Actions
 can start late.
 
+#### Allow A Non-Expiring Organisation PAT
+
+Do this once as an organisation owner:
+
+1. Go to GitHub.
+2. Open your organisation.
+3. Go to **Settings**.
+4. In the left sidebar, open **Personal access tokens**.
+5. Open **Settings**.
+6. Select **Fine-grained tokens**.
+7. Find **Set maximum lifetimes for personal access tokens**.
+8. Disable the requirement that fine-grained PATs must expire.
+9. Save.
+
 #### Create A GitHub Dispatch Token
 
-Create a fine-grained GitHub PAT scoped only to the private deployment repo.
+Create a fine-grained GitHub PAT that can only trigger the private deployment
+repo.
 
-Repository permissions:
+1. Open [GitHub's fine-grained token creation page](https://github.com/settings/personal-access-tokens/new).
+2. Set **Token name** to `daily-github-summary-dispatch`.
+3. Set **Description** to `Allows cron-job.org to trigger the daily summary workflow`.
+4. Set **Expiration** to **No expiration**.
+5. Under **Resource owner**, select the GitHub org that owns the private deployment repo.
+6. Under **Repository access**, choose **Only select repositories**.
+7. Select only the private deployment repo.
+8. Under **Repository permissions**, set:
+   - **Contents** - read and write
+   - **Metadata** - read-only, selected automatically
+9. Leave every other permission as **No access**.
+10. Click **Generate token**.
+11. Copy the token immediately. GitHub will not show it again.
 
-- **Metadata** - read-only, selected automatically
-- **Contents** - read and write
-
-GitHub requires `Contents: write` for the `repository_dispatch` endpoint.
+GitHub requires `Contents: write` for the `repository_dispatch` endpoint. Use
+this token only for the cron-job.org `Authorization` request header below.
 
 #### Create The cron-job.org Job
 
