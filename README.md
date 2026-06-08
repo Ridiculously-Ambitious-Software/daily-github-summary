@@ -46,9 +46,48 @@ the shared upstream, then create an empty private deployment repo for each
 organisation. The private repo keeps its own config and secrets, while still
 remembering this public repo as `upstream`.
 
-After creating the empty private repo on GitHub, open a terminal in an empty
-local folder and paste these lines directly into the terminal. Do not save them
-as a separate script file.
+### Step 1: Create The Private Deployment Repo
+
+Create a new **private** GitHub repository in the organisation that should
+receive the digest.
+
+Suggested repository settings:
+
+| Field | Value |
+| --- | --- |
+| Repository name | `daily-github-summary` |
+| Description | `Private deployment config for the daily GitHub summary digest.` |
+| Visibility | Private |
+| Initialize with README | No |
+| Add .gitignore | No |
+| Choose a license | No |
+
+The repository must be empty because the setup script below pushes this upstream
+repo into it.
+
+### Step 2: Configure Environment Variables
+
+Configure the runtime environment variables as GitHub Actions secrets. In the
+private deployment repo, go to **Settings -> Secrets and variables -> Actions ->
+New repository secret** and add:
+
+| Name | Value |
+| --- | --- |
+| `GH_READ_ONLY_ORGANISATION_PAT` | Read-only GitHub token scoped to the target org/repos |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `DISCORD_WEBHOOK_URL` | Discord incoming webhook URL |
+
+For a fine-grained GitHub PAT, use repository read access for:
+
+- **Metadata** - read-only
+- **Contents** - read-only
+- **Pull requests** - read-only, optional context
+- **Issues** - read-only, optional context
+
+### Step 3: Run The Setup Script
+
+Open a terminal in an empty local folder and paste these lines directly into the
+terminal. Do not save them as a separate script file.
 
 ```sh
 set -euo pipefail
@@ -98,32 +137,13 @@ customInstructions: |
   Capitalize all repo names
 ```
 
-### Actions Secrets
-
-In each private deployment repo, add:
-
-| Name | Value |
-| --- | --- |
-| `GH_READ_ONLY_ORGANISATION_PAT` | Read-only GitHub token scoped to the target org/repos |
-| `ANTHROPIC_API_KEY` | Anthropic API key |
-| `DISCORD_WEBHOOK_URL` | Discord incoming webhook URL |
-
-For a fine-grained GitHub PAT, use repository read access for:
-
-- **Metadata** - read-only
-- **Contents** - read-only
-- **Pull requests** - read-only, optional context
-- **Issues** - read-only, optional context
-
----
-
-## Scheduling With cron-job.org
+### Step 4: Schedule The Run With cron-job.org
 
 cron-job.org should call the private deployment repo's `repository_dispatch`
 trigger. We avoid a GitHub Actions `schedule` trigger because scheduled Actions
 can start late.
 
-### 1. Create A GitHub Dispatch Token
+#### Create A GitHub Dispatch Token
 
 Create a fine-grained GitHub PAT scoped only to the private deployment repo.
 
@@ -134,7 +154,7 @@ Repository permissions:
 
 GitHub requires `Contents: write` for the `repository_dispatch` endpoint.
 
-### 2. Create The cron-job.org Job
+#### Create The cron-job.org Job
 
 In cron-job.org, create a new cron job with these request settings:
 
