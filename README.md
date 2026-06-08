@@ -6,14 +6,15 @@ background context, asks Claude for a concise per-repo summary, and posts the
 result to Discord.
 
 This repository is intended to be the neutral upstream that organisation-specific
-repos fork from. Keep organisation names, organisation-specific prompt tweaks,
-Discord webhooks, and GitHub tokens out of the shared upstream.
+private deployment repos copy from. Keep organisation names,
+organisation-specific prompt tweaks, Discord webhooks, and GitHub tokens out of
+the shared upstream.
 
 - **Commit-focused output** - PRs and issues are never listed in the post.
 - **Optional PR/issue context** - titles and labels can help Claude understand why commits happened.
 - **Per-repo summaries** - Claude describes roughly what changed in each active repo.
 - **Fixed report contract** - the report always covers the last 24 hours, includes archived repos and forks unless blocked, and uses the hardcoded Anthropic model.
-- **Fork-owned config** - each fork edits one YAML file with its organisation name, excluded repositories, and report tweaks.
+- **Deployment-repo-owned config** - each private deployment repo edits one YAML file with its organisation name, excluded repositories, and report tweaks.
 - **External scheduler support** - cron-job.org triggers runs through GitHub's `repository_dispatch` API.
 
 ---
@@ -38,15 +39,51 @@ org, the workflow exits before calling Claude or Discord.
 
 ---
 
-## Recommended Fork Setup
+## Recommended Private Deployment Setup
 
-Use this repo as the shared upstream. For each organisation, create a private
-fork or deployment repo, then edit the fork directly.
+GitHub does not allow a private fork of a public repository. Use this repo as
+the shared upstream, then create an empty private deployment repo for each
+organisation. The private repo keeps its own config and secrets, while still
+remembering this public repo as `upstream`.
+
+After creating the empty private repo on GitHub, open a terminal in an empty
+local folder and paste these lines directly into the terminal. Do not save them
+as a separate script file.
+
+```sh
+set -euo pipefail
+
+PUBLIC_REPO="https://github.com/Ridiculously-Ambitious-Software/daily-github-summary.git"
+
+printf "Private GitHub repo URL: "
+read -r PRIVATE_REPO_URL
+
+git clone "$PUBLIC_REPO" .
+git remote rename origin upstream
+git remote add origin "$PRIVATE_REPO_URL"
+
+OWNER_REPO="${PRIVATE_REPO_URL#git@github.com:}"
+OWNER_REPO="${OWNER_REPO#https://github.com/}"
+OWNER_REPO="${OWNER_REPO#http://github.com/}"
+TARGET_ORG="${OWNER_REPO%%/*}"
+
+perl -0pi -e "s/^organisationName:.*/organisationName: $TARGET_ORG/m" dailySummaryOrganisationConfig.yml
+
+git add dailySummaryOrganisationConfig.yml
+git commit -m "Configure daily summary for $TARGET_ORG"
+git push -u origin "$(git branch --show-current)"
+```
+
+The private repo URL can be either HTTPS, like
+`https://github.com/your-github-org/daily-github-summary.git`, or SSH, like
+`git@github.com:your-github-org/daily-github-summary.git`. The commands leave
+`origin` pointing at the private deployment repo and `upstream` pointing at this
+public shared repo.
 
 In [dailySummaryOrganisationConfig.yml](dailySummaryOrganisationConfig.yml),
+the pasted commands set `organisationName` from the private repo URL. Then
 update:
 
-- `organisationName` - the GitHub organisation to summarize.
 - `excludedRepositories` - repo names to skip, without the organisation prefix.
 - `customInstructions` - optional report-specific instructions for that organisation.
 
@@ -63,7 +100,7 @@ customInstructions: |
 
 ### Actions Secrets
 
-In each fork, add:
+In each private deployment repo, add:
 
 | Name | Value |
 | --- | --- |
@@ -82,12 +119,13 @@ For a fine-grained GitHub PAT, use repository read access for:
 
 ## Scheduling With cron-job.org
 
-cron-job.org should call the fork's `repository_dispatch` trigger. We avoid a
-GitHub Actions `schedule` trigger because scheduled Actions can start late.
+cron-job.org should call the private deployment repo's `repository_dispatch`
+trigger. We avoid a GitHub Actions `schedule` trigger because scheduled Actions
+can start late.
 
 ### 1. Create A GitHub Dispatch Token
 
-Create a fine-grained GitHub PAT scoped only to the fork/deployment repo.
+Create a fine-grained GitHub PAT scoped only to the private deployment repo.
 
 Repository permissions:
 
@@ -108,7 +146,8 @@ In cron-job.org, create a new cron job with these request settings:
 | Schedule | The desired report time, for example every day at `08:00` |
 | Save responses | Optional, useful while testing |
 
-Replace `OWNER/REPO` with the private fork that contains `.github/workflows/daily-summary.yml`.
+Replace `OWNER/REPO` with the private deployment repo that contains
+`.github/workflows/daily-summary.yml`.
 
 Add these request headers:
 
@@ -136,4 +175,4 @@ cron-job.org substitutes `%cjo:uuid4%` and `%cjo:unixtime%` on each execution,
 which makes the request easy to identify in logs.
 
 GitHub returns `204 No Content` when the dispatch was accepted. The workflow run
-then appears in the fork's Actions tab.
+then appears in the private deployment repo's Actions tab.
