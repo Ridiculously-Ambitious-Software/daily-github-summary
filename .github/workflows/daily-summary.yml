@@ -1,0 +1,39 @@
+name: Daily GitHub Summary
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print payload instead of posting to Discord"
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [daily-summary]
+
+jobs:
+  summarise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: daily-github-summary-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Run digest
+        env:
+          GH_READ_ONLY_ORGANISATION_PAT: ${{ secrets.GH_READ_ONLY_ORGANISATION_PAT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: npm start
