@@ -70,22 +70,42 @@ repo into it.
 
 ### Step 2: Configure Environment Variables
 
+#### Create The Organisation Read-Only PAT
+
+Create this token from the GitHub account that should own the organisation-wide
+read access.
+
+1. Open [GitHub's fine-grained token creation page](https://github.com/settings/personal-access-tokens/new).
+2. Set **Token name** to `daily-github-summary-read-[ORGANISATION]`.
+3. Set **Description** to `Allows the daily summary workflow to read organisation activity`.
+4. Set **Expiration** to **No expiration**.
+5. Under **Resource owner**, select the GitHub organisation being reported on.
+6. Under **Repository access**, choose **All repositories**. This lets the digest
+   include new organisation repos without updating the token.
+7. Under **Repository permissions**, set:
+   - **Contents** - read-only
+   - **Pull requests** - read-only
+   - **Issues** - read-only
+   - **Metadata** - read-only, selected automatically
+8. Leave every other permission as **No access**.
+9. Click **Generate token**.
+10. Copy the token immediately. GitHub will not show it again.
+
+If the organisation does not appear under **Resource owner**, make sure you are
+signed in with an account that belongs to the organisation and that the
+organisation allows fine-grained PATs.
+
+#### Add The GitHub Actions Secrets
+
 Configure the runtime environment variables as GitHub Actions secrets. In the
 private deployment repo, go to **Settings -> Secrets and variables -> Actions ->
 New repository secret** and add:
 
 | Name | Value |
 | --- | --- |
-| `GH_READ_ONLY_ORGANISATION_PAT` | Read-only GitHub token scoped to the target org/repos |
+| `GH_READ_ONLY_ORGANISATION_PAT` | The `daily-github-summary-read-[ORGANISATION]` token |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `DISCORD_WEBHOOK_URL` | Discord incoming webhook URL |
-
-For a fine-grained GitHub PAT, use repository read access for:
-
-- **Metadata** - read-only
-- **Contents** - read-only
-- **Pull requests** - read-only, optional context
-- **Issues** - read-only, optional context
 
 ### Step 3: Run The Setup Script
 
