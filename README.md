@@ -10,6 +10,9 @@ private deployment repos copy from. Keep organisation names,
 organisation-specific prompt tweaks, Discord webhooks, and GitHub tokens out of
 the shared upstream.
 
+Original upstream repo:
+[Ridiculously-Ambitious-Software/daily-github-summary](https://github.com/Ridiculously-Ambitious-Software/daily-github-summary)
+
 - **Commit-focused output** - PRs and issues are never listed in the post.
 - **Optional PR/issue context** - titles and labels can help Claude understand why commits happened.
 - **Per-repo summaries** - Claude describes roughly what changed in each active repo.
