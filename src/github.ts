@@ -375,11 +375,13 @@ async function fetchCommitsForRepos(
         );
         out.set(`${org}/${repo.name}`, items);
       } catch (err) {
-        if (err instanceof RequestError && (err.status === 404 || err.status === 409)) {
-          // 409 = empty repo, 404 = no access; skip silently.
+        if (err instanceof RequestError && err.status === 409) {
+          // 409 = empty repo; skip silently.
           continue;
         }
-        console.warn(`commit fetch failed for ${repo.name}:`, (err as Error).message);
+        throw new Error(
+          `commit fetch failed for ${org}/${repo.name}: ${(err as Error).message}`,
+        );
       }
     }
   }
@@ -433,12 +435,18 @@ async function fetchBranchActivityForRepos(
       if (!repo) continue;
       try {
         const activity = await fetchBranchActivityForRepo(rest, org, repo, sinceIso);
-        if (activity.length > 0) out.set(`${org}/${repo.name}`, activity);
-      } catch (err) {
-        if (err instanceof RequestError && (err.status === 404 || err.status === 409)) {
-          continue;
+        if (activity.length > 0) {
+          console.log(
+            `[digest] branch activity: ${org}/${repo.name} ` +
+              `${activity.length} branch(es), ` +
+              `${activity.reduce((sum, branch) => sum + branch.commits.length, 0)} commit(s)`,
+          );
+          out.set(`${org}/${repo.name}`, activity);
         }
-        console.warn(`branch activity fetch failed for ${repo.name}:`, (err as Error).message);
+      } catch (err) {
+        throw new Error(
+          `branch activity fetch failed for ${org}/${repo.name}: ${(err as Error).message}`,
+        );
       }
     }
   }
@@ -453,10 +461,13 @@ async function fetchBranchActivityForRepo(
   repo: OrgRepo,
   sinceIso: string,
 ): Promise<BranchActivity[]> {
-  const [branches, pullRequestsByBranch] = await Promise.all([
-    listBranches(rest, org, repo),
-    listRecentPullRequestSignalsByBranch(rest, org, repo, sinceIso),
-  ]);
+  const branches = await listBranches(rest, org, repo);
+  const pullRequestsByBranch = await listRecentPullRequestSignalsByBranch(
+    rest,
+    org,
+    repo,
+    sinceIso,
+  );
 
   const out: BranchActivity[] = [];
   const seenBranches = new Set<string>();
@@ -481,11 +492,9 @@ async function fetchBranchActivityForRepo(
         commits = await fetchRecentBranchOnlyCommits(rest, org, repo, branch.name, sinceIso);
       }
     } catch (err) {
-      console.warn(
-        `branch activity failed for ${repo.name}/${branch.name}:`,
-        (err as Error).message,
+      throw new Error(
+        `branch activity failed for ${org}/${repo.name}/${branch.name}: ${(err as Error).message}`,
       );
-      continue;
     }
     if (startedAndMergedInWindow) continue;
     if (commits.length === 0) continue;
@@ -518,9 +527,8 @@ async function fetchBranchActivityForRepo(
         status: "merged",
       });
     } catch (err) {
-      console.warn(
-        `merged branch activity failed for ${repo.name}/${pullRequest.branch}:`,
-        (err as Error).message,
+      throw new Error(
+        `merged branch activity failed for ${org}/${repo.name}/${pullRequest.branch}: ${(err as Error).message}`,
       );
     }
   }
