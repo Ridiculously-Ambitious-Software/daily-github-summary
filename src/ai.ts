@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ActivitySnapshot } from "./github";
 
-const ANTHROPIC_MODEL = "claude-opus-4-7";
+const ANTHROPIC_MODEL = "claude-opus-4-8";
 
 export interface RepoChangeSummary {
   repo: string;
@@ -71,9 +71,9 @@ export async function summariseActivity(
   const system = [
     "You prepare a concise daily Discord digest from default-branch commits in private GitHub repos.",
     "Write for engineers: concrete, plain, and careful about uncertainty.",
-    "Summarize what was roughly added or changed per repo, using commits as the only reportable source of work.",
+    "Summarize practical outcomes per repo, using commits as the only reportable source of work.",
     "The Discord UI separates main work from individual branch work; do not repeat those section labels in prose.",
-    "branchActivity.status is lifecycle context: `in_review` means review began during the report window; `merged` means the branch merged during the report window.",
+    "branchActivity.status is lifecycle context rendered by Discord; do not restate it in prose.",
     "Pull requests and issues are private context to help interpret commit intent; do not list them, link them, count them, or cite their numbers.",
     "When a reason is explicit, attach it directly to the related change instead of writing a separate reason.",
     "Do not infer business intent or project status that is not present in the provided data.",
@@ -85,15 +85,15 @@ export async function summariseActivity(
     "Produce a JSON object with this exact shape:",
     "{",
     '  "headline": string,         // brief, broadest useful takeaway',
-    '  "overview": string,         // 1-2 balanced sentences across all repos; honest if activity is light',
+    '  "overview": string,         // 1-3 balanced sentences across all repos; honest if activity is light',
     '  "repos": [',
     "    {",
     '      "repo": string,         // exactly one repo value from the input, e.g. "org/repo"',
-    '      "mainBranchSummary": string, // short summary of `commits`; empty string if there are none',
+    '      "mainBranchSummary": string, // 1-3 readable sentences about `commits`; empty string if there are none',
     '      "branches": [',
     "        {",
     '          "branch": string,   // exactly one branch value from `branchActivity`',
-    '          "summary": string   // short summary of that branch activity',
+    '          "summary": string   // 1-3 readable sentences about that branch activity',
     "        }",
     "      ]",
     "    }",
@@ -108,10 +108,14 @@ export async function summariseActivity(
     "- Base each branch `summary` only on that branch's `branchActivity` commits.",
     "- Do not mention branch work in `headline` or `overview` unless at least one repo has non-empty `branchActivity`.",
     "- Keep `overview` broad; leave repo-specific and branch-specific details for the repo summaries.",
-    "- In a branch `summary`, mention branch lifecycle status only when `status` is `in_review` or `merged`.",
+    "- Do not restate branch lifecycle status in summaries; Discord renders `in_review` and `merged` in the branch heading.",
     "- Do not mention PRs, issues, PR/issue numbers, links, or issue-tracker status in the output.",
     "- Do not prefix summaries with `main branch`, `default branch`, `other branches`, or similar section labels.",
+    "- Explain the practical change first.",
+    "- Do not enumerate every commit or implementation step.",
+    "- Include low-level implementation details only when they are essential to understand the change.",
     "- Prefer the concrete change over naming the author.",
+    "- Avoid vague activity labels like light, moderate, or substantial unless the report is unusually quiet or unusually large.",
     "- If commits look like maintenance, fixes, cleanup, or dependency work, say that plainly.",
     "- If multiple changes have different reasons, keep each reason next to its matching change.",
     "- If a reason is implicit, vague, or absent even after looking at context, omit the reason.",
