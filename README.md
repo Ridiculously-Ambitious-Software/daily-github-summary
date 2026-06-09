@@ -42,8 +42,8 @@ Original upstream repo:
    authors, and hidden PR/issue context. Claude returns structured JSON:
    `headline`, `overview`, and one `repos[]` summary per active repo.
 3. **`src/discord.ts`** builds one overview embed, then one embed per repo with:
-   - a main branch section with a short summary and linked commit subjects
-   - one other branches section with a short summary and linked branch commit subjects
+   - a main section with a short summary and a commit-range link
+   - one section per changed branch with its own summary, status, and commit-range link
 
 Quiet days are silent. If the lookback window contains zero default-branch
 commits and zero branch activity across the org, the workflow exits before

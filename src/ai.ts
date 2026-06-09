@@ -6,7 +6,12 @@ const ANTHROPIC_MODEL = "claude-opus-4-7";
 export interface RepoChangeSummary {
   repo: string;
   mainBranchSummary: string;
-  branchSummary: string;
+  branches: BranchChangeSummary[];
+}
+
+export interface BranchChangeSummary {
+  branch: string;
+  summary: string;
 }
 
 export interface AiSummary {
@@ -67,7 +72,7 @@ export async function summariseActivity(
     "You prepare a concise daily Discord digest from default-branch commits in private GitHub repos.",
     "Write for engineers: concrete, plain, and careful about uncertainty.",
     "Summarize what was roughly added or changed per repo, using commits as the only reportable source of work.",
-    "The Discord UI separates main-branch work from other branch work; do not repeat those section labels in prose.",
+    "The Discord UI separates main work from individual branch work; do not repeat those section labels in prose.",
     "branchActivity.status is lifecycle context: `in_review` means review began during the report window; `merged` means the branch merged during the report window.",
     "Pull requests and issues are private context to help interpret commit intent; do not list them, link them, count them, or cite their numbers.",
     "When a reason is explicit, attach it directly to the related change instead of writing a separate reason.",
@@ -80,12 +85,17 @@ export async function summariseActivity(
     "Produce a JSON object with this exact shape:",
     "{",
     '  "headline": string,         // brief, broadest useful takeaway',
-    '  "overview": string,         // 1-2 sentences across all repos; honest if activity is light',
+    '  "overview": string,         // 1-2 balanced sentences across all repos; honest if activity is light',
     '  "repos": [',
     "    {",
     '      "repo": string,         // exactly one repo value from the input, e.g. "org/repo"',
     '      "mainBranchSummary": string, // short summary of `commits`; empty string if there are none',
-    '      "branchSummary": string      // short summary of all `branchActivity`; empty string if there is none',
+    '      "branches": [',
+    "        {",
+    '          "branch": string,   // exactly one branch value from `branchActivity`',
+    '          "summary": string   // short summary of that branch activity',
+    "        }",
+    "      ]",
     "    }",
     "  ]",
     "}",
@@ -94,10 +104,11 @@ export async function summariseActivity(
     "- Include one `repos` item for every repo in the input.",
     "- Do not invent items not present in the data.",
     "- Base `mainBranchSummary` only on `commits`; PRs/issues may only clarify ambiguous commit subjects.",
-    "- Base `branchSummary` only on `branchActivity` commits.",
-    "- If a repo has no `branchActivity`, `branchSummary` must be an empty string.",
+    "- Include one `branches` item for each item in `branchActivity`, and no `branches` items when `branchActivity` is empty.",
+    "- Base each branch `summary` only on that branch's `branchActivity` commits.",
     "- Do not mention branch work in `headline` or `overview` unless at least one repo has non-empty `branchActivity`.",
-    "- In `branchSummary`, mention branch lifecycle status only when `status` is `in_review` or `merged`.",
+    "- Keep `overview` broad; leave repo-specific and branch-specific details for the repo summaries.",
+    "- In a branch `summary`, mention branch lifecycle status only when `status` is `in_review` or `merged`.",
     "- Do not mention PRs, issues, PR/issue numbers, links, or issue-tracker status in the output.",
     "- Do not prefix summaries with `main branch`, `default branch`, `other branches`, or similar section labels.",
     "- Prefer the concrete change over naming the author.",
@@ -162,8 +173,15 @@ function isRepoChangeSummary(value: unknown): value is RepoChangeSummary {
   return (
     typeof item.repo === "string" &&
     typeof item.mainBranchSummary === "string" &&
-    typeof item.branchSummary === "string"
+    Array.isArray(item.branches) &&
+    item.branches.every(isBranchChangeSummary)
   );
+}
+
+function isBranchChangeSummary(value: unknown): value is BranchChangeSummary {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<BranchChangeSummary>;
+  return typeof item.branch === "string" && typeof item.summary === "string";
 }
 
 function extractJson(text: string): string {

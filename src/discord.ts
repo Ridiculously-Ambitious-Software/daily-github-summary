@@ -145,13 +145,13 @@ function formatMainBranch(
   repo: RepoActivity,
   summary: RepoChangeSummary | undefined,
 ): string {
-  const lines = ["**Main branch**"];
+  const lines = ["**Main**"];
   if (summary?.mainBranchSummary) {
     lines.push(`• ${escapeMd(summary.mainBranchSummary)}`);
   }
   const link = formatCommitRangeLink(repo.url, repo.commits);
   if (link) {
-    lines.push(`• ${link}`);
+    lines[0] = `**Main** (${link})`;
   }
   return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
 }
@@ -160,28 +160,38 @@ function formatBranchActivity(
   branches: BranchActivity[],
   summary: RepoChangeSummary | undefined,
 ): string {
-  const lines = ["**Other branches**"];
-  const hasBranchCommits = branches.some((branch) => branch.commits.length > 0);
-  if (hasBranchCommits && summary?.branchSummary) {
-    lines.push(`• ${escapeMd(summary.branchSummary)}`);
-  }
+  const branchSummaries = buildBranchSummaryMap(summary);
+  const sections: string[] = [];
   for (const branch of branches) {
     const status =
       branch.status === "in_review"
-        ? " - in review"
+        ? " · in review"
         : branch.status === "merged"
-          ? " - merged"
+          ? " · merged"
           : "";
-    const branchLabel = branch.url
-      ? `[\`${escapeMd(branch.branch)}\`](${branch.url})`
-      : `\`${escapeMd(branch.branch)}\``;
-    lines.push(`• ${branchLabel}${status}`);
+    const branchLabel = `**${escapeMd(branch.branch)}${status}**`;
     const link = formatCommitRangeLink(`https://github.com/${branch.repo}`, branch.commits);
-    if (link) {
-      lines.push(`  - ${link}`);
+    const lines = [link ? `${branchLabel} (${link})` : branchLabel];
+    const branchSummary = branchSummaries.get(branch.branch);
+    if (branchSummary) {
+      lines.push(escapeMd(branchSummary));
     }
+    if (branch.url) {
+      lines.push(`[View branch](${branch.url})`);
+    }
+    sections.push(lines.join("\n"));
   }
-  return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
+  return truncate(sections.join("\n\n"), EMBED_FIELD_VALUE_LIMIT * 3);
+}
+
+function buildBranchSummaryMap(
+  summary: RepoChangeSummary | undefined,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const branch of summary?.branches ?? []) {
+    out.set(branch.branch, branch.summary);
+  }
+  return out;
 }
 
 function formatCommitRangeLink(repoUrl: string, commits: CommitItem[]): string | null {
