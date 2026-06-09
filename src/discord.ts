@@ -106,24 +106,12 @@ function buildRepoEmbed(
   const repoShort = repo.repo.split("/")[1] ?? repo.repo;
   const sections: string[] = [];
 
-  if (summary?.summary) {
-    sections.push(formatSection("Rough change", [escapeMd(summary.summary)]));
-  }
-
   if (repo.commits.length > 0) {
-    sections.push(
-      formatSection(
-        "Commits",
-        repo.commits.map(
-          (c) =>
-            `[\`${c.shortSha}\`](${c.url}) ${escapeMd(truncate(c.subject, 90))} - \`${c.author}\``,
-        ),
-      ),
-    );
+    sections.push(formatMainBranch(repo, summary));
   }
 
   if (repo.branchActivity.length > 0) {
-    sections.push(formatBranchActivity(repo.branchActivity));
+    sections.push(formatBranchActivity(repo.branchActivity, summary));
   }
 
   const description = truncate(sections.join("\n\n"), EMBED_DESCRIPTION_LIMIT);
@@ -136,10 +124,33 @@ function buildRepoEmbed(
   };
 }
 
-function formatBranchActivity(branches: BranchActivity[]): string {
-  const lines = ["**Branch activity**"];
+function formatMainBranch(
+  repo: RepoActivity,
+  summary: RepoChangeSummary | undefined,
+): string {
+  const lines = ["**Main branch**"];
+  if (summary?.mainBranchSummary) {
+    lines.push(`• ${escapeMd(summary.mainBranchSummary)}`);
+  }
+  for (const commit of repo.commits) {
+    lines.push(
+      `• [\`${commit.shortSha}\`](${commit.url}) ${escapeMd(truncate(commit.subject, 90))} - \`${commit.author}\``,
+    );
+  }
+  return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
+}
+
+function formatBranchActivity(
+  branches: BranchActivity[],
+  summary: RepoChangeSummary | undefined,
+): string {
+  const lines = ["**Other branches**"];
+  const hasBranchCommits = branches.some((branch) => branch.commits.length > 0);
+  if (hasBranchCommits && summary?.branchSummary) {
+    lines.push(`• ${escapeMd(summary.branchSummary)}`);
+  }
   for (const branch of branches) {
-    const status = branch.openedPullRequestToday ? " - ready to merge" : "";
+    const status = branch.openedPullRequestToday ? " - in review" : "";
     lines.push(`• [\`${escapeMd(branch.branch)}\`](${branch.url})${status}`);
     for (const commit of branch.commits.slice(0, 5)) {
       lines.push(

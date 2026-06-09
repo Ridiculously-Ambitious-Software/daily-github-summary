@@ -5,7 +5,8 @@ const ANTHROPIC_MODEL = "claude-opus-4-7";
 
 export interface RepoChangeSummary {
   repo: string;
-  summary: string;
+  mainBranchSummary: string;
+  branchSummary: string;
 }
 
 export interface AiSummary {
@@ -66,23 +67,25 @@ export async function summariseActivity(
     "You prepare a concise daily Discord digest from default-branch commits in private GitHub repos.",
     "Write for engineers: concrete, plain, and careful about uncertainty.",
     "Summarize what was roughly added or changed per repo, using commits as the only reportable source of work.",
-    "Default-branch commits are shipped work; branchActivity is unmerged branch work.",
-    "If branchActivity.openedPullRequestToday is true, that branch became ready to merge during the report window.",
+    "The Discord UI separates main-branch work from other branch work; do not repeat those section labels in prose.",
+    "branchActivity.openedPullRequestToday only means that branch entered review during the report window.",
     "Pull requests and issues are private context to help interpret commit intent; do not list them, link them, count them, or cite their numbers.",
     "When a reason is explicit, attach it directly to the related change instead of writing a separate reason.",
     "Do not infer business intent or project status that is not present in the provided data.",
+    "Avoid release-state or merge-readiness wording unless it appears in the commit text.",
     "Return ONLY valid JSON matching the schema. No prose before or after.",
   ].join(" ");
 
   const userPrompt = [
     "Produce a JSON object with this exact shape:",
     "{",
-    '  "headline": string,         // <= 90 chars, the broadest useful takeaway',
+    '  "headline": string,         // brief, broadest useful takeaway',
     '  "overview": string,         // 1-2 sentences across all repos; honest if activity is light',
     '  "repos": [',
     "    {",
     '      "repo": string,         // exactly one repo value from the input, e.g. "org/repo"',
-    '      "summary": string       // <= 320 chars; what changed, with explicit reasons attached to the relevant change',
+    '      "mainBranchSummary": string, // short summary of `commits`; empty string if there are none',
+    '      "branchSummary": string      // short summary of all `branchActivity`; empty string if there is none',
     "    }",
     "  ]",
     "}",
@@ -90,10 +93,13 @@ export async function summariseActivity(
     "Rules:",
     "- Include one `repos` item for every repo in the input.",
     "- Do not invent items not present in the data.",
-    "- Base `summary` on default-branch commits and branchActivity commits; PRs/issues may only clarify ambiguous commit subjects.",
-    "- Keep shipped default-branch work distinct from unmerged branch work.",
-    "- Mention that a branch became ready to merge only when `openedPullRequestToday` is true.",
+    "- Base `mainBranchSummary` only on `commits`; PRs/issues may only clarify ambiguous commit subjects.",
+    "- Base `branchSummary` only on `branchActivity` commits.",
+    "- If a repo has no `branchActivity`, `branchSummary` must be an empty string.",
+    "- Do not mention branch work in `headline` or `overview` unless at least one repo has non-empty `branchActivity`.",
+    "- In `branchSummary`, mention review status only when `openedPullRequestToday` is true.",
     "- Do not mention PRs, issues, PR/issue numbers, links, or issue-tracker status in the output.",
+    "- Do not prefix summaries with `main branch`, `default branch`, `other branches`, or similar section labels.",
     "- Prefer the concrete change over naming the author.",
     "- If commits look like maintenance, fixes, cleanup, or dependency work, say that plainly.",
     "- If multiple changes have different reasons, keep each reason next to its matching change.",
@@ -153,7 +159,11 @@ function parseSummary(text: string): AiSummary {
 function isRepoChangeSummary(value: unknown): value is RepoChangeSummary {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<RepoChangeSummary>;
-  return typeof item.repo === "string" && typeof item.summary === "string";
+  return (
+    typeof item.repo === "string" &&
+    typeof item.mainBranchSummary === "string" &&
+    typeof item.branchSummary === "string"
+  );
 }
 
 function extractJson(text: string): string {
