@@ -1,5 +1,5 @@
 import type { AiSummary, RepoChangeSummary } from "./ai";
-import type { ActivitySnapshot, RepoActivity } from "./github";
+import type { ActivitySnapshot, BranchActivity, RepoActivity } from "./github";
 
 interface DiscordEmbed {
   title?: string;
@@ -110,15 +110,21 @@ function buildRepoEmbed(
     sections.push(formatSection("Rough change", [escapeMd(summary.summary)]));
   }
 
-  sections.push(
-    formatSection(
-      "Commits",
-      repo.commits.map(
-        (c) =>
-          `[\`${c.shortSha}\`](${c.url}) ${escapeMd(truncate(c.subject, 90))} - \`${c.author}\``,
+  if (repo.commits.length > 0) {
+    sections.push(
+      formatSection(
+        "Commits",
+        repo.commits.map(
+          (c) =>
+            `[\`${c.shortSha}\`](${c.url}) ${escapeMd(truncate(c.subject, 90))} - \`${c.author}\``,
+        ),
       ),
-    ),
-  );
+    );
+  }
+
+  if (repo.branchActivity.length > 0) {
+    sections.push(formatBranchActivity(repo.branchActivity));
+  }
 
   const description = truncate(sections.join("\n\n"), EMBED_DESCRIPTION_LIMIT);
 
@@ -128,6 +134,20 @@ function buildRepoEmbed(
     description,
     color: COLOR_REPO,
   };
+}
+
+function formatBranchActivity(branches: BranchActivity[]): string {
+  const lines = ["**Branch activity**"];
+  for (const branch of branches) {
+    const status = branch.openedPullRequestToday ? " - ready to merge" : "";
+    lines.push(`• [\`${escapeMd(branch.branch)}\`](${branch.url})${status}`);
+    for (const commit of branch.commits.slice(0, 5)) {
+      lines.push(
+        `  - [\`${commit.shortSha}\`](${commit.url}) ${escapeMd(truncate(commit.subject, 86))} - \`${commit.author}\``,
+      );
+    }
+  }
+  return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
 }
 
 function buildRepoSummaryMap(

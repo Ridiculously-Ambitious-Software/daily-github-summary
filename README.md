@@ -1,9 +1,9 @@
 # Daily GitHub Summary
 
 A reusable externally scheduled GitHub digest runner. It reads default-branch
-commits across a private GitHub organisation, uses PRs/issues as optional
-background context, asks Claude for a concise per-repo summary, and posts the
-result to Discord.
+commits and changed non-default branches across a private GitHub organisation,
+uses PRs/issues as optional background context, asks Claude for a concise
+per-repo summary, and posts the result to Discord.
 
 This repository is intended to be the neutral upstream that organisation-specific
 private deployment repos copy from. Keep organisation names,
@@ -13,7 +13,8 @@ the shared upstream.
 Original upstream repo:
 [Ridiculously-Ambitious-Software/daily-github-summary](https://github.com/Ridiculously-Ambitious-Software/daily-github-summary)
 
-- **Commit-focused output** - PRs and issues are never listed in the post.
+- **Commit-focused output** - PRs and issues are signals only; they are never listed in the post.
+- **Branch activity** - changed non-default branches are shown separately from shipped default-branch work.
 - **Optional PR/issue context** - titles and labels can help Claude understand why commits happened.
 - **Per-repo summaries** - Claude describes roughly what changed in each active repo.
 - **Fixed report contract** - the report always covers the last 24 hours, includes archived repos and forks unless blocked, and uses the hardcoded Anthropic model.
@@ -28,17 +29,24 @@ Original upstream repo:
    - REST `repos.listForOrg` enumerates all organisation repos, including archived repos and forks.
    - `excludedRepositories` skips repos by repo name.
    - REST `repos.listCommits` fetches recent commits from each repo's default branch.
+   - REST `repos.listBranches` and `repos.compareCommitsWithBasehead` find
+     non-default branches with branch-only commits in the same window.
+   - REST `pulls.list` checks whether a pull request was opened for a changed
+     branch during the window; when that happened, the branch is marked as ready
+     to merge.
    - REST `search.issuesAndPullRequests` fetches recent PRs/issues as best-effort context.
 2. **`src/ai.ts`** sends Claude a compact JSON snapshot containing repo names,
-   commit subjects, commit bodies, authors, and hidden PR/issue context. Claude
-   returns structured JSON: `headline`, `overview`, and one `repos[]` summary per
-   active repo.
+   default-branch commit subjects, branch commit subjects, commit bodies,
+   authors, and hidden PR/issue context. Claude returns structured JSON:
+   `headline`, `overview`, and one `repos[]` summary per active repo.
 3. **`src/discord.ts`** builds one overview embed, then one embed per repo with:
    - rough change summary with any explicit rationale attached to the matching change
    - linked commit subjects for verification
+   - changed branch commits in a separate branch activity section
 
-Quiet days are silent. If the lookback window contains zero commits across the
-org, the workflow exits before calling Claude or Discord.
+Quiet days are silent. If the lookback window contains zero default-branch
+commits and zero branch activity across the org, the workflow exits before
+calling Claude or Discord.
 
 ---
 

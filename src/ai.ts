@@ -33,6 +33,16 @@ export async function summariseActivity(
         body: c.body,
         author: c.author,
       })),
+      branchActivity: r.branchActivity.map((b) => ({
+        branch: b.branch,
+        openedPullRequestToday: b.openedPullRequestToday,
+        commits: b.commits.map((c) => ({
+          sha: c.shortSha,
+          subject: c.subject,
+          body: c.body,
+          author: c.author,
+        })),
+      })),
       context: {
         pullRequests: r.context.pullRequests.map((p) => ({
           n: p.number,
@@ -56,6 +66,8 @@ export async function summariseActivity(
     "You prepare a concise daily Discord digest from default-branch commits in private GitHub repos.",
     "Write for engineers: concrete, plain, and careful about uncertainty.",
     "Summarize what was roughly added or changed per repo, using commits as the only reportable source of work.",
+    "Default-branch commits are shipped work; branchActivity is unmerged branch work.",
+    "If branchActivity.openedPullRequestToday is true, that branch became ready to merge during the report window.",
     "Pull requests and issues are private context to help interpret commit intent; do not list them, link them, count them, or cite their numbers.",
     "When a reason is explicit, attach it directly to the related change instead of writing a separate reason.",
     "Do not infer business intent or project status that is not present in the provided data.",
@@ -78,7 +90,9 @@ export async function summariseActivity(
     "Rules:",
     "- Include one `repos` item for every repo in the input.",
     "- Do not invent items not present in the data.",
-    "- Base `summary` on commits; PRs/issues may only clarify ambiguous commit subjects.",
+    "- Base `summary` on default-branch commits and branchActivity commits; PRs/issues may only clarify ambiguous commit subjects.",
+    "- Keep shipped default-branch work distinct from unmerged branch work.",
+    "- Mention that a branch became ready to merge only when `openedPullRequestToday` is true.",
     "- Do not mention PRs, issues, PR/issue numbers, links, or issue-tracker status in the output.",
     "- Prefer the concrete change over naming the author.",
     "- If commits look like maintenance, fixes, cleanup, or dependency work, say that plainly.",

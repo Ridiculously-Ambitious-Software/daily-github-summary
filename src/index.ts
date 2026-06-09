@@ -23,7 +23,8 @@ async function main(): Promise<void> {
   const snapshot = await collectActivity(config, githubPat);
   console.log(
     `[digest] collected: ${snapshot.totals.activeRepos} active repos, ` +
-      `${snapshot.totals.commits} commits`,
+      `${snapshot.totals.commits} default-branch commits, ` +
+      `${snapshot.totals.branchCommits} branch commits`,
   );
 
   if (snapshot.totals.activeRepos === 0) {

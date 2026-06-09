@@ -15,6 +15,15 @@ export interface CommitItem {
   committedAt: string;
 }
 
+export interface BranchActivity {
+  repo: string;
+  branch: string;
+  url: string;
+  commits: CommitItem[];
+  openedPullRequestToday: boolean;
+  pullRequestUrl: string | null;
+}
+
 export interface ContextItem {
   repo: string;
   kind: "pull_request" | "issue";
@@ -39,6 +48,7 @@ export interface RepoActivity {
   repo: string;
   url: string;
   commits: CommitItem[];
+  branchActivity: BranchActivity[];
   context: RepoContext;
 }
 
@@ -49,6 +59,8 @@ export interface ActivitySnapshot {
   repos: RepoActivity[];
   totals: {
     commits: number;
+    branchCommits: number;
+    activeBranches: number;
     activeRepos: number;
   };
 }
@@ -56,6 +68,16 @@ export interface ActivitySnapshot {
 interface OrgRepo {
   name: string;
   defaultBranch: string;
+}
+
+interface BranchNode {
+  name: string;
+}
+
+interface PullRequestBranchSignal {
+  branch: string;
+  url: string;
+  createdAt: string;
 }
 
 interface SearchContextNode {
@@ -79,6 +101,8 @@ interface ContextSearchSpec {
 
 const COMMIT_FETCH_SAFETY_LIMIT = 500;
 const CONTEXT_SEARCH_SAFETY_LIMIT = 500;
+const BRANCH_FETCH_SAFETY_LIMIT = 300;
+const BRANCH_COMMIT_FETCH_SAFETY_LIMIT = 100;
 const PAGE_SIZE = 100;
 
 export async function collectActivity(
@@ -104,20 +128,37 @@ export async function collectActivity(
     sinceIso,
     untilIso,
   );
+  const branchActivityByRepo = await fetchBranchActivityForRepos(
+    rest,
+    config.organization,
+    repos.filter((r) => !isExcluded(`${config.organization}/${r.name}`)),
+    sinceIso,
+  );
 
   const activeRepos: RepoActivity[] = [];
-  for (const [repo, commits] of commitsByRepo) {
-    if (commits.length === 0) continue;
+  const activeRepoNames = new Set([
+    ...commitsByRepo.keys(),
+    ...branchActivityByRepo.keys(),
+  ]);
+  for (const repo of activeRepoNames) {
+    const commits = commitsByRepo.get(repo) ?? [];
+    const branchActivity = branchActivityByRepo.get(repo) ?? [];
+    if (commits.length === 0 && branchActivity.length === 0) continue;
     activeRepos.push({
       repo,
       url: `https://github.com/${repo}`,
       commits,
+      branchActivity,
       context: contextByRepo.get(repo) ?? emptyRepoContext(),
     });
   }
 
   const sortedRepos = activeRepos.sort((a, b) => {
-    return b.commits.length - a.commits.length || a.repo.localeCompare(b.repo);
+    const aActivity =
+      a.commits.length + a.branchActivity.reduce((sum, b) => sum + b.commits.length, 0);
+    const bActivity =
+      b.commits.length + b.branchActivity.reduce((sum, b) => sum + b.commits.length, 0);
+    return bActivity - aActivity || a.repo.localeCompare(b.repo);
   });
 
   return {
@@ -127,6 +168,12 @@ export async function collectActivity(
     repos: sortedRepos,
     totals: {
       commits: sortedRepos.reduce((sum, r) => sum + r.commits.length, 0),
+      branchCommits: sortedRepos.reduce(
+        (sum, r) =>
+          sum + r.branchActivity.reduce((branchSum, b) => branchSum + b.commits.length, 0),
+        0,
+      ),
+      activeBranches: sortedRepos.reduce((sum, r) => sum + r.branchActivity.length, 0),
       activeRepos: sortedRepos.length,
     },
   };
@@ -358,41 +405,198 @@ async function fetchCommitsForRepo(
       per_page: PAGE_SIZE,
       page,
     });
-    out.push(
-      ...res.data.map((c) => {
-        const rawMessage = c.commit.message ?? "";
-        const [rawSubject = "", ...bodyLines] = rawMessage.split("\n");
-        const body = bodyLines.join("\n").trim();
-        const trimmedSubject = rawSubject.trim();
-        // Merge commits carry no useful subject; fall back to the first body line.
-        const mergeBodySubject = /^Merge pull request #\d+/i.test(trimmedSubject)
-          ? body.split("\n").map((line) => line.trim()).find(Boolean)
-          : undefined;
-        const subject =
-          mergeBodySubject?.slice(0, 200) ||
-          trimmedSubject.slice(0, 200) ||
-          "(no commit message)";
-        return {
-          repo: `${org}/${repo.name}`,
-          sha: c.sha,
-          shortSha: c.sha.slice(0, 7),
-          subject,
-          body: body.slice(0, 1000),
-          url: c.html_url,
-          author:
-            c.author?.login ??
-            c.commit.author?.name ??
-            c.commit.author?.email ??
-            "unknown",
-          committedAt: c.commit.committer?.date ?? c.commit.author?.date ?? sinceIso,
-        };
-      }),
-    );
+    out.push(...res.data.map((c) => toCommitItem(`${org}/${repo.name}`, c, sinceIso)));
     if (res.data.length < PAGE_SIZE) break;
     page++;
   }
 
   return out.slice(0, COMMIT_FETCH_SAFETY_LIMIT);
+}
+
+async function fetchBranchActivityForRepos(
+  rest: Octokit,
+  org: string,
+  repos: OrgRepo[],
+  sinceIso: string,
+): Promise<Map<string, BranchActivity[]>> {
+  const out = new Map<string, BranchActivity[]>();
+  const concurrency = 4;
+  let i = 0;
+
+  async function worker() {
+    while (i < repos.length) {
+      const idx = i++;
+      const repo = repos[idx];
+      if (!repo) continue;
+      try {
+        const activity = await fetchBranchActivityForRepo(rest, org, repo, sinceIso);
+        if (activity.length > 0) out.set(`${org}/${repo.name}`, activity);
+      } catch (err) {
+        if (err instanceof RequestError && (err.status === 404 || err.status === 409)) {
+          continue;
+        }
+        console.warn(`branch activity fetch failed for ${repo.name}:`, (err as Error).message);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return out;
+}
+
+async function fetchBranchActivityForRepo(
+  rest: Octokit,
+  org: string,
+  repo: OrgRepo,
+  sinceIso: string,
+): Promise<BranchActivity[]> {
+  const [branches, openedPullRequestsByBranch] = await Promise.all([
+    listBranches(rest, org, repo),
+    listOpenedPullRequestsByBranch(rest, org, repo, sinceIso),
+  ]);
+
+  const out: BranchActivity[] = [];
+  for (const branch of branches) {
+    if (branch.name === repo.defaultBranch) continue;
+    let commits: CommitItem[];
+    try {
+      commits = await fetchRecentBranchOnlyCommits(rest, org, repo, branch.name, sinceIso);
+    } catch (err) {
+      console.warn(
+        `branch compare failed for ${repo.name}/${branch.name}:`,
+        (err as Error).message,
+      );
+      continue;
+    }
+    if (commits.length === 0) continue;
+    const pullRequest = openedPullRequestsByBranch.get(branch.name);
+    out.push({
+      repo: `${org}/${repo.name}`,
+      branch: branch.name,
+      url: `https://github.com/${org}/${repo.name}/tree/${encodeBranchPath(branch.name)}`,
+      commits,
+      openedPullRequestToday: Boolean(pullRequest),
+      pullRequestUrl: pullRequest?.url ?? null,
+    });
+  }
+
+  return out.sort((a, b) => {
+    const aLatest = a.commits[0]?.committedAt ?? "";
+    const bLatest = b.commits[0]?.committedAt ?? "";
+    return bLatest.localeCompare(aLatest) || a.branch.localeCompare(b.branch);
+  });
+}
+
+function encodeBranchPath(branch: string): string {
+  return branch.split("/").map(encodeURIComponent).join("/");
+}
+
+async function listBranches(
+  rest: Octokit,
+  org: string,
+  repo: OrgRepo,
+): Promise<BranchNode[]> {
+  const out: BranchNode[] = [];
+  let page = 1;
+
+  while (out.length < BRANCH_FETCH_SAFETY_LIMIT) {
+    const res = await rest.repos.listBranches({
+      owner: org,
+      repo: repo.name,
+      per_page: PAGE_SIZE,
+      page,
+    });
+    out.push(...res.data.map((branch) => ({ name: branch.name })));
+    if (res.data.length < PAGE_SIZE) break;
+    page++;
+  }
+
+  return out.slice(0, BRANCH_FETCH_SAFETY_LIMIT);
+}
+
+async function listOpenedPullRequestsByBranch(
+  rest: Octokit,
+  org: string,
+  repo: OrgRepo,
+  sinceIso: string,
+): Promise<Map<string, PullRequestBranchSignal>> {
+  const pulls = await rest.paginate(rest.pulls.list, {
+    owner: org,
+    repo: repo.name,
+    state: "open",
+    sort: "created",
+    direction: "desc",
+    per_page: PAGE_SIZE,
+  });
+
+  const sinceMs = Date.parse(sinceIso);
+  const byBranch = new Map<string, PullRequestBranchSignal>();
+  for (const pull of pulls) {
+    const createdAt = pull.created_at ?? "";
+    if (Date.parse(createdAt) < sinceMs) continue;
+    if (pull.head.repo?.full_name !== `${org}/${repo.name}`) continue;
+    byBranch.set(pull.head.ref, {
+      branch: pull.head.ref,
+      url: pull.html_url,
+      createdAt,
+    });
+  }
+  return byBranch;
+}
+
+async function fetchRecentBranchOnlyCommits(
+  rest: Octokit,
+  org: string,
+  repo: OrgRepo,
+  branch: string,
+  sinceIso: string,
+): Promise<CommitItem[]> {
+  const res = await rest.repos.compareCommitsWithBasehead({
+    owner: org,
+    repo: repo.name,
+    basehead: `${repo.defaultBranch}...${branch}`,
+    per_page: BRANCH_COMMIT_FETCH_SAFETY_LIMIT,
+  });
+
+  const sinceMs = Date.parse(sinceIso);
+  return res.data.commits
+    .map((commit) => toCommitItem(`${org}/${repo.name}`, commit, sinceIso))
+    .filter((commit) => Date.parse(commit.committedAt) >= sinceMs)
+    .sort((a, b) => b.committedAt.localeCompare(a.committedAt))
+    .slice(0, BRANCH_COMMIT_FETCH_SAFETY_LIMIT);
+}
+
+function toCommitItem(
+  repo: string,
+  c: Awaited<ReturnType<Octokit["repos"]["listCommits"]>>["data"][number],
+  fallbackDate: string,
+): CommitItem {
+  const rawMessage = c.commit.message ?? "";
+  const [rawSubject = "", ...bodyLines] = rawMessage.split("\n");
+  const body = bodyLines.join("\n").trim();
+  const trimmedSubject = rawSubject.trim();
+  // Merge commits carry no useful subject; fall back to the first body line.
+  const mergeBodySubject = /^Merge pull request #\d+/i.test(trimmedSubject)
+    ? body.split("\n").map((line) => line.trim()).find(Boolean)
+    : undefined;
+  const subject =
+    mergeBodySubject?.slice(0, 200) ||
+    trimmedSubject.slice(0, 200) ||
+    "(no commit message)";
+  return {
+    repo,
+    sha: c.sha,
+    shortSha: c.sha.slice(0, 7),
+    subject,
+    body: body.slice(0, 1000),
+    url: c.html_url,
+    author:
+      c.author?.login ??
+      c.commit.author?.name ??
+      c.commit.author?.email ??
+      "unknown",
+    committedAt: c.commit.committer?.date ?? c.commit.author?.date ?? fallbackDate,
+  };
 }
 
 function emptyRepoContext(): RepoContext {
