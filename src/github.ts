@@ -7,6 +7,7 @@ export const LOOKBACK_HOURS = 24;
 export interface CommitItem {
   repo: string;
   sha: string;
+  parentSha: string | null;
   shortSha: string;
   subject: string;
   body: string;
@@ -694,6 +695,7 @@ function toCommitItem(
   return {
     repo,
     sha: c.sha,
+    parentSha: c.parents[0]?.sha ?? null,
     shortSha: c.sha.slice(0, 7),
     subject,
     body: body.slice(0, 1000),

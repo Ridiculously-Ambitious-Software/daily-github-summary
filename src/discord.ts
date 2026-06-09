@@ -1,5 +1,5 @@
 import type { AiSummary, RepoChangeSummary } from "./ai";
-import type { ActivitySnapshot, BranchActivity, RepoActivity } from "./github";
+import type { ActivitySnapshot, BranchActivity, CommitItem, RepoActivity } from "./github";
 
 interface DiscordEmbed {
   title?: string;
@@ -18,6 +18,7 @@ const COLOR_REPO = 0x2b2d31; // dark grey
 
 const EMBED_DESCRIPTION_LIMIT = 4096;
 const EMBED_FIELD_VALUE_LIMIT = 1024;
+const EMBEDS_TOTAL_TEXT_LIMIT = 6000;
 const TOTAL_EMBEDS_PER_MESSAGE = 10;
 
 export async function postDigest(
@@ -60,22 +61,38 @@ function buildMessages(
   );
 
   const messages: DiscordPayload[] = [];
-  const firstBatch: DiscordEmbed[] = [overview];
+  let batch: DiscordEmbed[] = [];
+  let batchTextLength = 0;
 
-  let i = 0;
-  while (i < repoEmbeds.length && firstBatch.length < TOTAL_EMBEDS_PER_MESSAGE) {
-    firstBatch.push(repoEmbeds[i]!);
-    i++;
+  for (const embed of [overview, ...repoEmbeds]) {
+    const embedTextLength = countEmbedText(embed);
+    if (
+      batch.length > 0 &&
+      (batch.length >= TOTAL_EMBEDS_PER_MESSAGE ||
+        batchTextLength + embedTextLength > EMBEDS_TOTAL_TEXT_LIMIT)
+    ) {
+      messages.push({ embeds: batch });
+      batch = [];
+      batchTextLength = 0;
+    }
+
+    batch.push(embed);
+    batchTextLength += embedTextLength;
   }
-  messages.push({ embeds: firstBatch });
 
-  while (i < repoEmbeds.length) {
-    const batch = repoEmbeds.slice(i, i + TOTAL_EMBEDS_PER_MESSAGE);
+  if (batch.length > 0) {
     messages.push({ embeds: batch });
-    i += TOTAL_EMBEDS_PER_MESSAGE;
   }
 
   return messages;
+}
+
+function countEmbedText(embed: DiscordEmbed): number {
+  return (
+    (embed.title?.length ?? 0) +
+    (embed.description?.length ?? 0) +
+    (embed.url?.length ?? 0)
+  );
 }
 
 function buildOverviewEmbed(
@@ -132,10 +149,9 @@ function formatMainBranch(
   if (summary?.mainBranchSummary) {
     lines.push(`• ${escapeMd(summary.mainBranchSummary)}`);
   }
-  for (const commit of repo.commits) {
-    lines.push(
-      `• [\`${commit.shortSha}\`](${commit.url}) ${escapeMd(truncate(commit.subject, 90))} - \`${commit.author}\``,
-    );
+  const link = formatCommitRangeLink(repo.url, repo.commits);
+  if (link) {
+    lines.push(`• ${link}`);
   }
   return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
 }
@@ -160,13 +176,29 @@ function formatBranchActivity(
       ? `[\`${escapeMd(branch.branch)}\`](${branch.url})`
       : `\`${escapeMd(branch.branch)}\``;
     lines.push(`• ${branchLabel}${status}`);
-    for (const commit of branch.commits.slice(0, 5)) {
-      lines.push(
-        `  - [\`${commit.shortSha}\`](${commit.url}) ${escapeMd(truncate(commit.subject, 86))} - \`${commit.author}\``,
-      );
+    const link = formatCommitRangeLink(`https://github.com/${branch.repo}`, branch.commits);
+    if (link) {
+      lines.push(`  - ${link}`);
     }
   }
   return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
+}
+
+function formatCommitRangeLink(repoUrl: string, commits: CommitItem[]): string | null {
+  if (commits.length === 0) return null;
+  if (commits.length === 1) {
+    const commit = commits[0]!;
+    return `[View commit](${commit.url})`;
+  }
+
+  const byOldestFirst = [...commits].sort((a, b) =>
+    a.committedAt.localeCompare(b.committedAt),
+  );
+  const oldest = byOldestFirst[0]!;
+  const newest = byOldestFirst[byOldestFirst.length - 1]!;
+  const base = oldest.parentSha ?? oldest.sha;
+  const compareUrl = `${repoUrl}/compare/${base}...${newest.sha}`;
+  return `[View ${commits.length} commits](${compareUrl})`;
 }
 
 function buildRepoSummaryMap(
@@ -181,12 +213,6 @@ function buildRepoSummaryMap(
     }
   }
   return out;
-}
-
-function formatSection(heading: string, items: string[]): string {
-  const lines = [`**${heading}**`];
-  for (const item of items) lines.push(`• ${item}`);
-  return truncate(lines.join("\n"), EMBED_FIELD_VALUE_LIMIT * 3);
 }
 
 function escapeMd(text: string): string {
