@@ -18,10 +18,9 @@ export interface CommitItem {
 export interface BranchActivity {
   repo: string;
   branch: string;
-  url: string;
+  url: string | null;
   commits: CommitItem[];
-  openedPullRequestToday: boolean;
-  pullRequestUrl: string | null;
+  status: "in_review" | "merged" | null;
 }
 
 export interface ContextItem {
@@ -77,7 +76,10 @@ interface BranchNode {
 interface PullRequestBranchSignal {
   branch: string;
   url: string;
+  number: number;
   createdAt: string;
+  mergedAt: string | null;
+  status: "in_review" | "merged";
 }
 
 interface SearchContextNode {
@@ -103,6 +105,7 @@ const COMMIT_FETCH_SAFETY_LIMIT = 500;
 const CONTEXT_SEARCH_SAFETY_LIMIT = 500;
 const BRANCH_FETCH_SAFETY_LIMIT = 300;
 const BRANCH_COMMIT_FETCH_SAFETY_LIMIT = 100;
+const PULL_REQUEST_FETCH_SAFETY_LIMIT = 300;
 const PAGE_SIZE = 100;
 
 export async function collectActivity(
@@ -450,34 +453,76 @@ async function fetchBranchActivityForRepo(
   repo: OrgRepo,
   sinceIso: string,
 ): Promise<BranchActivity[]> {
-  const [branches, openedPullRequestsByBranch] = await Promise.all([
+  const [branches, pullRequestsByBranch] = await Promise.all([
     listBranches(rest, org, repo),
-    listOpenedPullRequestsByBranch(rest, org, repo, sinceIso),
+    listRecentPullRequestSignalsByBranch(rest, org, repo, sinceIso),
   ]);
 
   const out: BranchActivity[] = [];
+  const seenBranches = new Set<string>();
   for (const branch of branches) {
     if (branch.name === repo.defaultBranch) continue;
+    seenBranches.add(branch.name);
+    const pullRequest = pullRequestsByBranch.get(branch.name);
     let commits: CommitItem[];
+    let startedAndMergedInWindow = false;
     try {
-      commits = await fetchRecentBranchOnlyCommits(rest, org, repo, branch.name, sinceIso);
+      if (pullRequest?.status === "merged") {
+        const window = await fetchRecentPullRequestCommits(
+          rest,
+          org,
+          repo,
+          pullRequest.number,
+          sinceIso,
+        );
+        commits = window.commits;
+        startedAndMergedInWindow = window.startedInWindow;
+      } else {
+        commits = await fetchRecentBranchOnlyCommits(rest, org, repo, branch.name, sinceIso);
+      }
     } catch (err) {
       console.warn(
-        `branch compare failed for ${repo.name}/${branch.name}:`,
+        `branch activity failed for ${repo.name}/${branch.name}:`,
         (err as Error).message,
       );
       continue;
     }
+    if (startedAndMergedInWindow) continue;
     if (commits.length === 0) continue;
-    const pullRequest = openedPullRequestsByBranch.get(branch.name);
     out.push({
       repo: `${org}/${repo.name}`,
       branch: branch.name,
       url: `https://github.com/${org}/${repo.name}/tree/${encodeBranchPath(branch.name)}`,
       commits,
-      openedPullRequestToday: Boolean(pullRequest),
-      pullRequestUrl: pullRequest?.url ?? null,
+      status: pullRequest?.status ?? null,
     });
+  }
+
+  for (const pullRequest of pullRequestsByBranch.values()) {
+    if (pullRequest.status !== "merged") continue;
+    if (seenBranches.has(pullRequest.branch)) continue;
+    try {
+      const window = await fetchRecentPullRequestCommits(
+        rest,
+        org,
+        repo,
+        pullRequest.number,
+        sinceIso,
+      );
+      if (window.startedInWindow || window.commits.length === 0) continue;
+      out.push({
+        repo: `${org}/${repo.name}`,
+        branch: pullRequest.branch,
+        url: null,
+        commits: window.commits,
+        status: "merged",
+      });
+    } catch (err) {
+      console.warn(
+        `merged branch activity failed for ${repo.name}/${pullRequest.branch}:`,
+        (err as Error).message,
+      );
+    }
   }
 
   return out.sort((a, b) => {
@@ -514,34 +559,89 @@ async function listBranches(
   return out.slice(0, BRANCH_FETCH_SAFETY_LIMIT);
 }
 
-async function listOpenedPullRequestsByBranch(
+async function listRecentPullRequestSignalsByBranch(
   rest: Octokit,
   org: string,
   repo: OrgRepo,
   sinceIso: string,
 ): Promise<Map<string, PullRequestBranchSignal>> {
-  const pulls = await rest.paginate(rest.pulls.list, {
-    owner: org,
-    repo: repo.name,
-    state: "open",
-    sort: "created",
-    direction: "desc",
-    per_page: PAGE_SIZE,
-  });
-
   const sinceMs = Date.parse(sinceIso);
+  const pulls = [];
+  let page = 1;
+  while (pulls.length < PULL_REQUEST_FETCH_SAFETY_LIMIT) {
+    const res = await rest.pulls.list({
+      owner: org,
+      repo: repo.name,
+      state: "all",
+      sort: "updated",
+      direction: "desc",
+      per_page: PAGE_SIZE,
+      page,
+    });
+    pulls.push(...res.data);
+    if (res.data.length < PAGE_SIZE) break;
+    const oldestUpdatedAt = res.data[res.data.length - 1]?.updated_at ?? "";
+    if (Date.parse(oldestUpdatedAt) < sinceMs) break;
+    page++;
+  }
+
   const byBranch = new Map<string, PullRequestBranchSignal>();
-  for (const pull of pulls) {
+  for (const pull of pulls.slice(0, PULL_REQUEST_FETCH_SAFETY_LIMIT)) {
     const createdAt = pull.created_at ?? "";
-    if (Date.parse(createdAt) < sinceMs) continue;
     if (pull.head.repo?.full_name !== `${org}/${repo.name}`) continue;
+    const mergedAt = pull.merged_at ?? null;
+    const status =
+      mergedAt && Date.parse(mergedAt) >= sinceMs
+        ? "merged"
+        : pull.state === "open" && Date.parse(createdAt) >= sinceMs
+          ? "in_review"
+          : null;
+    if (!status) continue;
     byBranch.set(pull.head.ref, {
       branch: pull.head.ref,
       url: pull.html_url,
+      number: pull.number,
       createdAt,
+      mergedAt,
+      status,
     });
   }
   return byBranch;
+}
+
+async function fetchRecentPullRequestCommits(
+  rest: Octokit,
+  org: string,
+  repo: OrgRepo,
+  pullNumber: number,
+  sinceIso: string,
+): Promise<{ commits: CommitItem[]; startedInWindow: boolean }> {
+  const out: CommitItem[] = [];
+  let page = 1;
+
+  while (out.length < BRANCH_COMMIT_FETCH_SAFETY_LIMIT) {
+    const res = await rest.pulls.listCommits({
+      owner: org,
+      repo: repo.name,
+      pull_number: pullNumber,
+      per_page: PAGE_SIZE,
+      page,
+    });
+    out.push(...res.data.map((commit) => toCommitItem(`${org}/${repo.name}`, commit, sinceIso)));
+    if (res.data.length < PAGE_SIZE) break;
+    page++;
+  }
+
+  const sinceMs = Date.parse(sinceIso);
+  const sorted = out.sort((a, b) => a.committedAt.localeCompare(b.committedAt));
+  const startedInWindow =
+    sorted.length > 0 && sorted.every((commit) => Date.parse(commit.committedAt) >= sinceMs);
+  const commits = sorted
+    .filter((commit) => Date.parse(commit.committedAt) >= sinceMs)
+    .sort((a, b) => b.committedAt.localeCompare(a.committedAt))
+    .slice(0, BRANCH_COMMIT_FETCH_SAFETY_LIMIT);
+
+  return { commits, startedInWindow };
 }
 
 async function fetchRecentBranchOnlyCommits(

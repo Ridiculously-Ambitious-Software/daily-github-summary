@@ -36,7 +36,7 @@ export async function summariseActivity(
       })),
       branchActivity: r.branchActivity.map((b) => ({
         branch: b.branch,
-        openedPullRequestToday: b.openedPullRequestToday,
+        status: b.status,
         commits: b.commits.map((c) => ({
           sha: c.shortSha,
           subject: c.subject,
@@ -68,7 +68,7 @@ export async function summariseActivity(
     "Write for engineers: concrete, plain, and careful about uncertainty.",
     "Summarize what was roughly added or changed per repo, using commits as the only reportable source of work.",
     "The Discord UI separates main-branch work from other branch work; do not repeat those section labels in prose.",
-    "branchActivity.openedPullRequestToday only means that branch entered review during the report window.",
+    "branchActivity.status is lifecycle context: `in_review` means review began during the report window; `merged` means the branch merged during the report window.",
     "Pull requests and issues are private context to help interpret commit intent; do not list them, link them, count them, or cite their numbers.",
     "When a reason is explicit, attach it directly to the related change instead of writing a separate reason.",
     "Do not infer business intent or project status that is not present in the provided data.",
@@ -97,7 +97,7 @@ export async function summariseActivity(
     "- Base `branchSummary` only on `branchActivity` commits.",
     "- If a repo has no `branchActivity`, `branchSummary` must be an empty string.",
     "- Do not mention branch work in `headline` or `overview` unless at least one repo has non-empty `branchActivity`.",
-    "- In `branchSummary`, mention review status only when `openedPullRequestToday` is true.",
+    "- In `branchSummary`, mention branch lifecycle status only when `status` is `in_review` or `merged`.",
     "- Do not mention PRs, issues, PR/issue numbers, links, or issue-tracker status in the output.",
     "- Do not prefix summaries with `main branch`, `default branch`, `other branches`, or similar section labels.",
     "- Prefer the concrete change over naming the author.",

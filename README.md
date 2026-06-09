@@ -15,6 +15,7 @@ Original upstream repo:
 
 - **Commit-focused output** - PRs and issues are signals only; they are never listed in the post.
 - **Branch activity** - changed non-default branches are shown separately from main branch work.
+- **Lifecycle-aware branches** - branches started and merged in the same window are left to the main branch section; older branch work merged during the window can be marked as merged.
 - **Optional PR/issue context** - titles and labels can help Claude understand why commits happened.
 - **Per-repo summaries** - Claude describes roughly what changed in each active repo.
 - **Fixed report contract** - the report always covers the last 24 hours, includes archived repos and forks unless blocked, and uses the hardcoded Anthropic model.
@@ -30,10 +31,11 @@ Original upstream repo:
    - `excludedRepositories` skips repos by repo name.
    - REST `repos.listCommits` fetches recent commits from each repo's default branch.
    - REST `repos.listBranches` and `repos.compareCommitsWithBasehead` find
-     non-default branches with branch-only commits in the same window.
-   - REST `pulls.list` checks whether a pull request was opened for a changed
-     branch during the window; when that happened, the branch is marked as
-     in review.
+     existing non-default branches with branch-only commits in the same window.
+   - REST `pulls.list` detects branch lifecycle signals. Branches that entered
+     review during the window are marked as in review; older branches merged
+     during the window can be marked as merged. Branches started and merged
+     inside the same window are left to the main branch section.
    - REST `search.issuesAndPullRequests` fetches recent PRs/issues as best-effort context.
 2. **`src/ai.ts`** sends Claude a compact JSON snapshot containing repo names,
    default-branch commit subjects, branch commit subjects, commit bodies,

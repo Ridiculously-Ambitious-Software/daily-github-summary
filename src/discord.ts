@@ -150,8 +150,16 @@ function formatBranchActivity(
     lines.push(`• ${escapeMd(summary.branchSummary)}`);
   }
   for (const branch of branches) {
-    const status = branch.openedPullRequestToday ? " - in review" : "";
-    lines.push(`• [\`${escapeMd(branch.branch)}\`](${branch.url})${status}`);
+    const status =
+      branch.status === "in_review"
+        ? " - in review"
+        : branch.status === "merged"
+          ? " - merged"
+          : "";
+    const branchLabel = branch.url
+      ? `[\`${escapeMd(branch.branch)}\`](${branch.url})`
+      : `\`${escapeMd(branch.branch)}\``;
+    lines.push(`• ${branchLabel}${status}`);
     for (const commit of branch.commits.slice(0, 5)) {
       lines.push(
         `  - [\`${commit.shortSha}\`](${commit.url}) ${escapeMd(truncate(commit.subject, 86))} - \`${commit.author}\``,
