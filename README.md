@@ -18,7 +18,7 @@ Original upstream repo:
 - **Lifecycle-aware branches** - branches started and merged in the same window are left to the main branch section; older branch work merged during the window can be marked as merged.
 - **Optional PR/issue context** - titles and labels can help Claude understand why commits happened.
 - **Per-repo summaries** - Claude describes roughly what changed in each active repo.
-- **Fixed report contract** - the report always covers the last 24 hours, includes archived repos and forks unless blocked, and uses the hardcoded Anthropic model.
+- **Fixed report contract** - the report always covers the last 24 hours, includes archived repos and forks unless blocked, and uses the hardcoded Claude Fable 5 model.
 - **Deployment-repo-owned config** - each private deployment repo edits one YAML file with its organisation name, excluded repositories, and report tweaks.
 - **External scheduler support** - cron-job.org triggers runs through GitHub's `repository_dispatch` API.
 

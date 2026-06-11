@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ActivitySnapshot } from "./github";
 
-const ANTHROPIC_MODEL = "claude-opus-4-8";
+const ANTHROPIC_MODEL = "claude-fable-5";
 
 export interface RepoChangeSummary {
   repo: string;
@@ -19,6 +19,66 @@ export interface AiSummary {
   overview: string;
   repos: RepoChangeSummary[];
 }
+
+const SUMMARY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["headline", "overview", "repos"],
+  properties: {
+    headline: {
+      type: "string",
+      description: "Brief, broadest useful takeaway of the day.",
+    },
+    overview: {
+      type: "string",
+      description:
+        "1-3 balanced sentences across all repos; honest if activity is light. Keep it broad — repo and branch detail belongs in the repo summaries. Only mention branch work if at least one repo has branchActivity.",
+    },
+    repos: {
+      type: "array",
+      description: "Exactly one item per repo in the input.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["repo", "mainBranchSummary", "branches"],
+        properties: {
+          repo: {
+            type: "string",
+            description:
+              'The exact repo value from the input, e.g. "org/repo".',
+          },
+          mainBranchSummary: {
+            type: "string",
+            description:
+              "1-3 readable sentences based only on `commits`; empty string if there are none. PRs/issues may only clarify ambiguous commit subjects.",
+          },
+          branches: {
+            type: "array",
+            description:
+              "One item per `branchActivity` entry; empty when there are none.",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["branch", "summary"],
+              properties: {
+                branch: {
+                  type: "string",
+                  description:
+                    "The exact branch value from `branchActivity`.",
+                },
+                summary: {
+                  type: "string",
+                  description:
+                    "1-3 readable sentences based only on that branch's commits.",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
 
 export async function summariseActivity(
   snapshot: ActivitySnapshot,
@@ -69,63 +129,27 @@ export async function summariseActivity(
   };
 
   const system = [
-    "You prepare a concise daily Discord digest from default-branch commits in private GitHub repos.",
-    "Write for engineers: concrete, plain, and careful about uncertainty.",
-    "Summarize practical outcomes per repo, using commits as the only reportable source of work.",
-    "The Discord UI separates main work from individual branch work; do not repeat those section labels in prose.",
-    "branchActivity.status is lifecycle context rendered by Discord; do not restate it in prose.",
-    "Pull requests and issues are private context to help interpret commit intent; do not list them, link them, count them, or cite their numbers.",
-    "When a reason is explicit, attach it directly to the related change instead of writing a separate reason.",
-    "Do not infer business intent or project status that is not present in the provided data.",
-    "Avoid release-state or merge-readiness wording unless it appears in the commit text.",
-    "Return ONLY valid JSON matching the schema. No prose before or after.",
-  ].join(" ");
+    "You write the daily Discord digest of GitHub activity (main-branch commits and active branches) for a private engineering team.",
+    "Write like a sharp colleague catching the team up: concrete and plain, lead with what actually changed and why, skip implementation noise, and be honest when a day is quiet.",
+    "",
+    "Your output is rendered into Discord embeds, so:",
+    '- Each repo gets its own embed, with separate headings for main-branch work and each branch. Never write section labels like "main branch" or "other branches" in prose.',
+    "- Branch lifecycle status (in review, merged) is shown in the branch heading. Do not restate it.",
+    "- The `repo` and `branch` values you return are used as exact lookup keys — echo them verbatim from the input.",
+    "",
+    "Pull requests and issues are private context to help you interpret commit intent; never mention, count, or link them in the output.",
+    "Ground every statement in the provided commits. Do not infer business intent, release readiness, or project status that is not in the data.",
+  ].join("\n");
 
   const userPrompt = [
-    "Produce a JSON object with this exact shape:",
-    "{",
-    '  "headline": string,         // brief, broadest useful takeaway',
-    '  "overview": string,         // 1-3 balanced sentences across all repos; honest if activity is light',
-    '  "repos": [',
-    "    {",
-    '      "repo": string,         // exactly one repo value from the input, e.g. "org/repo"',
-    '      "mainBranchSummary": string, // 1-3 readable sentences about `commits`; empty string if there are none',
-    '      "branches": [',
-    "        {",
-    '          "branch": string,   // exactly one branch value from `branchActivity`',
-    '          "summary": string   // 1-3 readable sentences about that branch activity',
-    "        }",
-    "      ]",
-    "    }",
-    "  ]",
-    "}",
-    "",
-    "Rules:",
-    "- Include one `repos` item for every repo in the input.",
-    "- Do not invent items not present in the data.",
-    "- Base `mainBranchSummary` only on `commits`; PRs/issues may only clarify ambiguous commit subjects.",
-    "- Include one `branches` item for each item in `branchActivity`, and no `branches` items when `branchActivity` is empty.",
-    "- Base each branch `summary` only on that branch's `branchActivity` commits.",
-    "- Do not mention branch work in `headline` or `overview` unless at least one repo has non-empty `branchActivity`.",
-    "- Keep `overview` broad; leave repo-specific and branch-specific details for the repo summaries.",
-    "- Do not restate branch lifecycle status in summaries; Discord renders `in_review` and `merged` in the branch heading.",
-    "- Do not mention PRs, issues, PR/issue numbers, links, or issue-tracker status in the output.",
-    "- Do not prefix summaries with `main branch`, `default branch`, `other branches`, or similar section labels.",
-    "- Explain the practical change first.",
-    "- Do not enumerate every commit or implementation step.",
-    "- Include low-level implementation details only when they are essential to understand the change.",
-    "- Prefer the concrete change over naming the author.",
-    "- Avoid vague activity labels like light, moderate, or substantial unless the report is unusually quiet or unusually large.",
-    "- If commits look like maintenance, fixes, cleanup, or dependency work, say that plainly.",
-    "- If multiple changes have different reasons, keep each reason next to its matching change.",
-    "- If a reason is implicit, vague, or absent even after looking at context, omit the reason.",
+    "Summarize this activity snapshot into the daily digest.",
     customInstructions
       ? [
           "",
           "Organisation-specific report instructions:",
           customInstructions,
           "",
-          "Apply these instructions only when they do not conflict with the schema and rules above.",
+          "Apply these only where they do not conflict with your core instructions.",
         ].join("\n")
       : "",
     "",
@@ -137,64 +161,27 @@ export async function summariseActivity(
 
   const response = await client.messages.create({
     model: ANTHROPIC_MODEL,
-    max_tokens: 1800,
+    max_tokens: 4000,
     system,
+    output_config: {
+      format: { type: "json_schema", schema: SUMMARY_SCHEMA },
+    },
     messages: [{ role: "user", content: userPrompt }],
   });
 
+  return parseSummary(response);
+}
+
+function parseSummary(response: Anthropic.Message): AiSummary {
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("AI summary was truncated; raise max_tokens.");
+  }
+  if (response.stop_reason === "refusal") {
+    throw new Error("AI refused to produce a summary.");
+  }
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
-    .join("\n")
-    .trim();
-
-  return parseSummary(text);
-}
-
-function parseSummary(text: string): AiSummary {
-  const jsonText = extractJson(text);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch (err) {
-    throw new Error(
-      `AI did not return valid JSON: ${(err as Error).message}\n---\n${text}`,
-    );
-  }
-  const obj = parsed as Partial<AiSummary>;
-  return {
-    headline: typeof obj.headline === "string" ? obj.headline : "Daily commits",
-    overview: typeof obj.overview === "string" ? obj.overview : "",
-    repos: Array.isArray(obj.repos)
-      ? obj.repos.filter(isRepoChangeSummary)
-      : [],
-  };
-}
-
-function isRepoChangeSummary(value: unknown): value is RepoChangeSummary {
-  if (!value || typeof value !== "object") return false;
-  const item = value as Partial<RepoChangeSummary>;
-  return (
-    typeof item.repo === "string" &&
-    typeof item.mainBranchSummary === "string" &&
-    Array.isArray(item.branches) &&
-    item.branches.every(isBranchChangeSummary)
-  );
-}
-
-function isBranchChangeSummary(value: unknown): value is BranchChangeSummary {
-  if (!value || typeof value !== "object") return false;
-  const item = value as Partial<BranchChangeSummary>;
-  return typeof item.branch === "string" && typeof item.summary === "string";
-}
-
-function extractJson(text: string): string {
-  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence && fence[1]) return fence[1].trim();
-  const first = text.indexOf("{");
-  const last = text.lastIndexOf("}");
-  if (first !== -1 && last !== -1 && last > first) {
-    return text.slice(first, last + 1);
-  }
-  return text;
+    .join("");
+  return JSON.parse(text) as AiSummary;
 }
